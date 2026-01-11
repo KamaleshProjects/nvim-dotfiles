@@ -1,219 +1,175 @@
--- File: lua/plugins/lsp_config.lua (FINAL CORRECTED VERSION with Absolute Path)
+-- LSP Core Module
+--
+-- Focus: LSP client setup, diagnostics, and buffer-local keymaps.
+-- Principles:
+-- 1. Single Responsibility: This file only handles LSP client configuration.
+-- 2. Explicit Configuration: Diagnostics and keymaps are clearly defined.
+-- Note: Uses native vim.lsp.config (Neovim 0.11+)
+
+-- Hover documentation configuration
+local HOVER_WIDTH_RATIO = 0.6
+local HOVER_HEIGHT_RATIO = 0.4
+
+-- Track hover window
+local hover_win = nil
+
+-- LSP servers to enable (must match mason.lua)
+local LSP_SERVERS = {
+  "lua_ls",
+  "ruby_lsp",
+  "html",
+  "cssls",
+  "jsonls",
+  "ts_ls",
+  "eslint",
+  "pyright",
+  "bashls",
+  "rust_analyzer",
+  "gopls",
+  "golangci_lint_ls",
+}
+
+-- setup_hover_keymaps configures navigation keymaps for hover window.
+local function setup_hover_keymaps(bufnr, win_id)
+  local opts = { buffer = bufnr, noremap = true, silent = true }
+
+  -- Navigation
+  vim.keymap.set("n", "h", "<Left>", opts)
+  vim.keymap.set("n", "l", "<Right>", opts)
+  vim.keymap.set("n", "j", "<Down>", opts)
+  vim.keymap.set("n", "k", "<Up>", opts)
+
+  -- Scrolling
+  vim.keymap.set("n", "<C-f>", "<C-f>", opts)
+  vim.keymap.set("n", "<C-b>", "<C-b>", opts)
+  vim.keymap.set("n", "<C-d>", "<C-d>", opts)
+  vim.keymap.set("n", "<C-u>", "<C-u>", opts)
+
+  -- Close on Esc or q
+  vim.keymap.set("n", "<Esc>", function()
+    vim.api.nvim_win_close(win_id, true)
+    hover_win = nil
+  end, opts)
+  vim.keymap.set("n", "q", function()
+    vim.api.nvim_win_close(win_id, true)
+    hover_win = nil
+  end, opts)
+end
+
+-- custom_hover creates a floating window near the cursor for hover documentation.
+local function custom_hover()
+  -- If hover window exists and is valid, focus it
+  if hover_win and vim.api.nvim_win_is_valid(hover_win) then
+    vim.api.nvim_set_current_win(hover_win)
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  local params = vim.lsp.util.make_position_params()
+
+  vim.lsp.buf_request(bufnr, "textDocument/hover", params, function(err, result, ctx)
+    if err or not result then
+      return
+    end
+
+    local markdown_lines = vim.lsp.util.convert_input_to_markdown_lines(result.contents)
+    
+    -- Remove empty lines from start and end (replaces deprecated trim_empty_lines)
+    while #markdown_lines > 0 and markdown_lines[1] == "" do
+      table.remove(markdown_lines, 1)
+    end
+    while #markdown_lines > 0 and markdown_lines[#markdown_lines] == "" do
+      table.remove(markdown_lines, #markdown_lines)
+    end
+    
+    if vim.tbl_isempty(markdown_lines) then
+      return
+    end
+
+    local screen_w = vim.opt.columns:get()
+    local screen_h = vim.opt.lines:get() - vim.opt.cmdheight:get()
+    local window_w = math.floor(screen_w * HOVER_WIDTH_RATIO)
+    local window_h = math.floor(screen_h * HOVER_HEIGHT_RATIO)
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, markdown_lines)
+    vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
+    vim.api.nvim_buf_set_option(buf, "wrap", true)
+
+    -- Position window relative to cursor (below and slightly right)
+    hover_win = vim.api.nvim_open_win(buf, true, {
+      relative = "cursor",
+      row = 1,
+      col = 1,
+      width = window_w,
+      height = window_h,
+      border = "rounded",
+      style = "minimal",
+    })
+
+    -- Enable scrolling in hover window
+    vim.api.nvim_win_set_option(hover_win, "wrap", true)
+    vim.api.nvim_win_set_option(hover_win, "scrolloff", 0)
+
+    setup_hover_keymaps(buf, hover_win)
+  end)
+end
 
 return {
-  -- =======================================================================
-  -- 1. LSP CORE SETUP (nvim-lspconfig)
-  -- =======================================================================
-  {
-    'neovim/nvim-lspconfig',
-    dependencies = {
-      { 'williamboman/mason.nvim', opts = {} },
-      { 'williamboman/mason-lspconfig.nvim', opts = {} },
-      { 'hrsh7th/cmp-nvim-lsp' },
-      'nvim-lua/plenary.nvim',
-
-      { 'tpope/vim-rails', ft = { 'ruby', 'eruby' } },
-    },
-
-    config = function()
-      local lspconfig = require('lspconfig')
-      local mason_lspconfig = require('mason-lspconfig')
-
-      local servers = {
-          'html', 'cssls', 'jsonls', 'tsserver',
-          'lua_ls', 'pyright', 'bashls', 'rust_analyzer',
-          'ruby_lsp', -- Shopify Ruby LSP
-      }
-
-      local capabilities = require('cmp_nvim_lsp').default_capabilities()
-
-      -- --------------------------------------------------------------------------
-      -- 1. LSP on_attach - EMPTY
-      -- --------------------------------------------------------------------------
-      local on_attach = function(client, bufnr) 
-          -- Formatting and Keymaps are now handled by FileType Autocmds for reliability.
-      end
-
-
-      -- --------------------------------------------------------------------------
-      -- 2. Setup Mason for Automatic LSP Installation
-      -- --------------------------------------------------------------------------
-
-      mason_lspconfig.setup {
-        ensure_installed = servers,
-        handlers = {
-          -- Default handler
-          function(server_name)
-            lspconfig[server_name].setup {
-              on_attach = on_attach,
-              capabilities = capabilities,
-              settings = {},
-            }
-          end,
-
-          -- Custom handler for LuaLS
-          ['lua_ls'] = function()
-            lspconfig.lua_ls.setup {
-              on_attach = on_attach,
-              capabilities = capabilities,
-              settings = {
-                Lua = {
-                  runtime = { version = 'LuaJIT' },
-                  completion = { callSnippet = 'Replace' },
-                  workspace = { checkThirdParty = false, library = { vim.fn.stdpath("config") .. "/lua" } },
-                },
-              },
-            }
-          end,
-
-          -- Custom handler for Shopify Ruby LSP
-          ['ruby_lsp'] = function()
-            lspconfig.ruby_lsp.setup {
-              on_attach = on_attach,
-              capabilities = capabilities,
-              settings = {
-                ruby = {
-                  enabledFeatures = {
-                    debugging = true, codeActions = true, codeLens = true, completion = true, 
-                    definition = true, diagnostics = true, documentHighlights = true, documentLink = true,
-                    documentSymbols = true, foldingRanges = true, formatting = true, hover = true,
-                    inlayHint = true, onTypeFormatting = true, selectionRanges = true, 
-                    semanticHighlighting = true, signatureHelp = true, typeHierarchy = true, 
-                    workspaceSymbol = true
-                  },
-                  formatter = "rubocop", 
-                  addonSettings = {
-                    ['Ruby LSP Rails'] = {
-                      enablePendingMigrationsPrompt = false,
-                    }
-                  },
-                  featuresConfiguration = {
-                    inlayHint = { enableAll = true },
-                    debugging = { enabled = true, attachMode = "remote", remotePort = 38698 },
-                  },
-                  rubyVersionManager = { identifier = "auto" }
-                }
-              }
-            }
-          end,
-        },
-      }
-
-      -- --------------------------------------------------------------------------
-      -- 3. Diagnostics Configuration
-      -- --------------------------------------------------------------------------
-
-      vim.diagnostic.config({
-        virtual_text = {
-          source = "always",
-          spacing = 4,
-          prefix = '●',
-        },
-        signs = true,
-        update_in_insert = false,
-        severity_sort = true,
-        float = {
-          source = "always",
-          border = 'rounded',
-        },
-      })
-      
-      -- --------------------------------------------------------------------------
-      -- 4. Reliable FileType Autocmd for Keymaps
-      -- --------------------------------------------------------------------------
-      
-      local function set_lsp_keymaps()
-          local bufnr = vim.api.nvim_get_current_buf()
-          local base_opts = { noremap = true, silent = true, buffer = bufnr }
-
-          -- Go to Definition/References
-          vim.keymap.set('n', 'gD', vim.lsp.buf.declaration, vim.tbl_extend('force', base_opts, { desc = '[G]oto [D]eclaration' }))
-          vim.keymap.set('n', 'gd', vim.lsp.buf.definition, vim.tbl_extend('force', base_opts, { desc = '[G]oto [D]efinition' }))
-          vim.keymap.set('n', 'gi', vim.lsp.buf.implementation, vim.tbl_extend('force', base_opts, { desc = '[G]oto [I]mplementation' }))
-          vim.keymap.set('n', 'gr', vim.lsp.buf.references, vim.tbl_extend('force', base_opts, { desc = '[G]oto [R]eferences' }))
-
-          -- Documentation/Code Actions
-          vim.keymap.set('n', 'K', vim.lsp.buf.hover, vim.tbl_extend('force', base_opts, { desc = 'Hover Documentation' }))
-          vim.keymap.set('n', '<C-k>', vim.lsp.buf.signature_help, vim.tbl_extend('force', base_opts, { desc = 'Signature Help' }))
-          vim.keymap.set('n', '<leader>ca', vim.lsp.buf.code_action, vim.tbl_extend('force', base_opts, { desc = 'Code [A]ctions' }))
-          vim.keymap.set('n', '<leader>rn', vim.lsp.buf.rename, vim.tbl_extend('force', base_opts, { desc = '[R]e[n]ame' }))
-
-          -- Diagnostic Navigation
-          vim.keymap.set('n', '[d', vim.diagnostic.goto_prev, vim.tbl_extend('force', base_opts, { desc = 'Go to previous diagnostic' }))
-          vim.keymap.set('n', ']d', vim.diagnostic.goto_next, vim.tbl_extend('force', base_opts, { desc = 'Go to next diagnostic' }))
-          vim.keymap.set('n', '<leader>vd', vim.diagnostic.open_float, vim.tbl_extend('force', base_opts, { desc = 'View Diagnostic' }))
-      end
-
-      local lsp_filetypes = { 
-          'ruby', 'eruby', 'lua', 'html', 'css', 'json', 
-          'typescript', 'javascript', 'python', 'bash', 'rust' 
-      }
-
-      vim.api.nvim_create_autocmd('FileType', {
-          pattern = lsp_filetypes,
-          group = vim.api.nvim_create_augroup('LspKeymaps', { clear = true }),
-          callback = set_lsp_keymaps,
-      })
-      
-      -- --------------------------------------------------------------------------
-      -- 5. Direct Rubocop Autocorrect on Save (THE ABSOLUTE PATH FIX)
-      -- --------------------------------------------------------------------------
-      local rubocop_filetypes = { 'ruby', 'eruby' }
-
-      -- 🚨 USE THE ABSOLUTE PATH FOUND VIA 'which rubocop'
-      local RUBOCOP_PATH = '/Users/dalinar/.local/share/mise/installs/ruby/3.3.6/bin/rubocop'
-      
-      vim.api.nvim_create_autocmd('BufWritePre', {
-          pattern = rubocop_filetypes,
-          group = vim.api.nvim_create_augroup('RubyFormatting', { clear = true }),
-          callback = function()
-              local bufnr = vim.api.nvim_get_current_buf()
-              local file_path = vim.fn.expand('%:p')
-              
-              -- 1. Ensure content is written to disk before Rubocop runs on it
-              vim.cmd('write') 
-
-              -- 2. Run Rubocop using the absolute path
-              -- -A is a shortcut for --autocorrect --safe-autocorrect
-              local cmd = RUBOCOP_PATH .. ' -A ' .. vim.fn.shellescape(file_path)
-              
-              -- Run the command synchronously (blocking until Rubocop finishes)
-              vim.fn.system(cmd)
-              
-              -- 3. Reload the buffer to see the changes made by Rubocop
-              if vim.api.nvim_buf_is_loaded(bufnr) then
-                  vim.cmd('e!') 
-              end
-          end,
-      })
-
-    end, -- end of nvim-lspconfig config function
+  "neovim/nvim-lspconfig",
+  dependencies = {
+    "williamboman/mason.nvim",
+    "williamboman/mason-lspconfig.nvim",
   },
-  
-  -- =======================================================================
-  -- 2. TREE-SITTER
-  -- =======================================================================
-  {
-    'nvim-treesitter/nvim-treesitter',
-    build = ':TSUpdate',
-    opts = {
-      ensure_installed = { 
-        'lua', 'html', 'css', 'javascript', 'typescript', 'json', 
-        'bash', 'python', 'rust', 'ruby', 'erb'
+  event = { "BufReadPre", "BufNewFile" },
+  config = function()
+    -- Diagnostics: Squiggly underlines only, no virtual text
+    vim.diagnostic.config({
+      virtual_text = false,
+      underline = true,
+      signs = {
+        text = {
+          [vim.diagnostic.severity.ERROR] = "",
+          [vim.diagnostic.severity.WARN] = "",
+          [vim.diagnostic.severity.HINT] = "",
+          [vim.diagnostic.severity.INFO] = "",
+        },
       },
-      highlight = { enable = true },
-      indent = { enable = true },
-    },
-  },
-  
-  -- =======================================================================
-  -- 3. nvim-cmp and Snippet Plugins (Dependencies are required here)
-  -- =======================================================================
-  { 'nvim-lua/plenary.nvim' }, 
-  { 'L3MON4D3/LuaSnip' },
-  { 'rafamadriz/friendly-snippets' },
-  { 'onsails/lspkind.nvim' },
-  
-  -- The nvim-cmp setup file
-  { 'hrsh7th/nvim-cmp', lazy = false, config = require('plugins.nvim-cmp') },
+      update_in_insert = false,
+      severity_sort = true,
+      float = {
+        border = "rounded",
+        source = "always",
+      },
+    })
+
+    -- Setup LSP keymaps when LSP attaches to buffer
+    vim.api.nvim_create_autocmd("LspAttach", {
+      group = vim.api.nvim_create_augroup("LspKeymaps", { clear = true }),
+      callback = function(event)
+        local function opts(desc)
+          return { buffer = event.buf, noremap = true, silent = true, desc = desc }
+        end
+
+        -- Goto navigation
+        vim.keymap.set("n", "gD", vim.lsp.buf.declaration, opts("Goto Declaration"))
+        vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts("Goto Definition"))
+        vim.keymap.set("n", "gi", vim.lsp.buf.implementation, opts("Goto Implementation"))
+        vim.keymap.set("n", "gr", vim.lsp.buf.references, opts("Goto References"))
+
+        -- Documentation and diagnostics
+        vim.keymap.set("n", "K", custom_hover, opts("Hover Documentation"))
+        vim.keymap.set("n", "<S-K>", custom_hover, opts("Hover Documentation"))
+        vim.keymap.set("n", "<C-k>", vim.lsp.buf.signature_help, opts("Signature Help"))
+
+        -- Code actions and rename
+        vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts("Code Actions"))
+        vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts("Rename"))
+      end,
+    })
+
+    -- Enable LSP servers using native vim.lsp.config (Neovim 0.11+)
+    vim.lsp.enable(LSP_SERVERS)
+  end,
 }
+
